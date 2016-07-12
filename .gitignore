@@ -1,0 +1,12 @@
+*.pyc
+*.so
+*.egg
+*.egg-info
+dist
+build
+..gitignore*
+*idea
+idea
+log
+logs
+data
