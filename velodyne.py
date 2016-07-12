@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 import struct
 import time
 import numpy as np
+from multiprocessing import Process, Queue, Pool
+
+import gevent.monkey
+
+gevent.monkey.patch_socket()
+import gevent
 
 from apyros.metalog import MetaLog, disableAsserts
 
@@ -24,98 +30,81 @@ ROTATION_RESOLUTION = 0.01
 ROTATION_MAX_UNITS = 36000
 CSV_HEADER = ["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","laser_id","azimuth","distance_m","adjustedtime","timestamp"]
 
-class Velodyne:
-    def __init__(self, metalog=None):
-        if metalog is None:
-            metalog = MetaLog()
-        self.soc = metalog.createLoggedSocket("velodyne", headerFormat="<BBBI")
-        self.soc.bind(('', PORT))
-        self.metalog = metalog
-        self.buf = ""
-        self.time = None
-        self.last_blocked = None
-        self.points = [CSV_HEADER]
-        self.scan_index = 0
-        self.prev_azimuth = None
+MSG_QUEUE = Queue(-1)
 
-    def calc(self, dis, azimuth, intensity, laser_id, timestamp):
-        R = dis * DISTANCE_RESOLUTION
-        omega = LASER_ANGLES[laser_id] * np.pi / 180.0
-        alpha = azimuth / 100.0 * np.pi / 180.0
-        X = R * np.cos(omega) * np.sin(alpha)
-        Y = R * np.cos(omega) * np.cos(alpha)
-        Z = R * np.sin(omega)
-        return [X, Y, Z, int(intensity), laser_id, azimuth, R, time.time(), timestamp]
+def save_data(path, data):
+    with open(path, 'w') as fp:
+        wr = csv.writer(fp, delimiter=',')
+        wr.writerows(data)
 
-    def write_data(self):
-        dirs = 'data'
-        file_fmt = os.path.join(dirs, '%Y-%m-%d_%H%M')
-        path = datetime.now().strftime(file_fmt)
-        try:
-            if os.path.exists(path) is False:
-                os.makedirs(path)
-        except Exception, e:
-            print e
-        timestamp = '%.6f' % time.time()
-        csv_index = '%08d' % self.scan_index
-        file_path = "{}/i{}_{}.csv".format(path, csv_index, timestamp)
-        with open(file_path, 'w') as fp:
-            wr = csv.writer(fp, delimiter=',')
-            wr.writerows(self.points)
-
-    def parse(self, data):
-        assert len(data) == 1206, len(data)
-        timestamp, factory = struct.unpack_from("<IH", data, offset=1200)
-        assert factory == 0x2237, hex(factory)  # 0x22=VLP-16, 0x37=Strongest Return
-        time = timestamp/1000000.0
-        if self.time is not None:
-            lost_packets = int(round((time - self.time)/EXPECTED_PACKET_TIME)) - 1
+def save_process(msg_queue):
+    while True:
+        if msg_queue.empty():
+            pass
         else:
-            lost_packets = 0
-        self.time = time
-        if lost_packets > 0 and (self.last_blocked is None or self.time > self.last_blocked + EXPECTED_SCAN_DURATION):
-            self.last_blocked = self.time + EXPECTED_SCAN_DURATION
-            self.scan_index += 1
-            print "DROPPED index", self.scan_index
-        if self.last_blocked is not None and self.time < self.last_blocked:
-            return  # to catch up-to-date packets again ...
+            msg = msg_queue.get()
+            save_data(msg['path'], msg['data'])
+            print msg['path'], 'queue size: %d' % (msg_queue.qsize())
+def calc(dis, azimuth, intensity, laser_id, timestamp):
+    R = dis * DISTANCE_RESOLUTION
+    omega = LASER_ANGLES[laser_id] * np.pi / 180.0
+    alpha = azimuth / 100.0 * np.pi / 180.0
+    X = R * np.cos(omega) * np.sin(alpha)
+    Y = R * np.cos(omega) * np.cos(alpha)
+    Z = R * np.sin(omega)
+    return [X, Y, Z, int(intensity), laser_id, azimuth, R, time.time(), timestamp]
 
-        for offset in xrange(0, 1200, 100):
-            # flag | azimuth | 0-15 data | 0-15 data
-            flag, azimuth = struct.unpack_from("<HH", data, offset)
-            assert flag == 0xEEFF, hex(flag)
-            for step in xrange(2):
-                azimuth += step
-                azimuth %= ROTATION_MAX_UNITS
-                if self.prev_azimuth is not None and azimuth < self.prev_azimuth:
-                    self.write_data();
-                    self.scan_index += 1
-                    self.points = [CSV_HEADER]
-                self.prev_azimuth = azimuth
-                # H-distance (2mm step), B-reflectivity (0
-                arr = struct.unpack_from('<' + "HB" * 16, data, offset + 4 + step * 48)
-                for i in xrange(NUM_LASERS):
-                    if arr[i * 2] != 0:
-                        self.points.append(self.calc(arr[i * 2], azimuth, arr[i * 2 + 1], i, timestamp))
+def capture(port, dirs, msg_queue):
+    metalog = MetaLog()
+    soc = metalog.createLoggedSocket("velodyne", headerFormat="<BBBI")
+    soc.bind(('', port))
+    points = [CSV_HEADER]
+    scan_index = 0
+    prev_azimuth = None
 
-    def update(self):
-        while True:
-            data = self.soc.recv(2000)
-            if len(data) > 0:
-                assert len(data) == 1206, len(data)
-                break
-        self.parse(data)
-
-
-if __name__ == "__main__":
     try:
-        sensor = Velodyne()
         while True:
             try:
-                sensor.update()
+                data = soc.recv(2000)
+                if len(data) > 0:
+                    assert len(data) == 1206, len(data)
+                    timestamp, factory = struct.unpack_from("<IH", data, offset=1200)
+                    assert factory == 0x2237, hex(factory)  # 0x22=VLP-16, 0x37=Strongest Return
+                    for offset in xrange(0, 1200, 100):
+                        flag, azimuth = struct.unpack_from("<HH", data, offset)
+                        assert flag == 0xEEFF, hex(flag)
+                        for step in xrange(2):
+                            azimuth += step
+                            azimuth %= ROTATION_MAX_UNITS
+                            if prev_azimuth is not None and azimuth < prev_azimuth:
+                                file_fmt = os.path.join(dirs, '%Y-%m-%d_%H%M')
+                                path = datetime.now().strftime(file_fmt)
+                                try:
+                                    if os.path.exists(path) is False:
+                                        os.makedirs(path)
+                                except Exception, e:
+                                    print e
+                                timestamp = '%.6f' % time.time()
+                                csv_index = '%08d' % scan_index
+                                msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp), 'data': points}
+                                msg_queue.put(msg)
+                                scan_index += 1
+                                points = [CSV_HEADER]
+                            prev_azimuth = azimuth
+                            # H-distance (2mm step), B-reflectivity (0
+                            arr = struct.unpack_from('<' + "HB" * 16, data, offset + 4 + step * 48)
+                            for i in xrange(NUM_LASERS):
+                                if arr[i * 2] != 0:
+                                    points.append(calc(arr[i * 2], azimuth, arr[i * 2 + 1], i, timestamp))
             except Exception, e:
                 print e
     except KeyboardInterrupt, e:
         print e
 
-# vim: expandtab sw=4 ts=4
+if __name__ == "__main__":
+    processA = Process(target = capture, args = (PORT, './data', MSG_QUEUE))
+    processA.start()
+    threads = []
+    for i in xrange(4):
+        threads.append(gevent.spawn(save_process, MSG_QUEUE))
+    gevent.joinall(threads)
