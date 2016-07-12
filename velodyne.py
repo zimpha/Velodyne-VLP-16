@@ -22,6 +22,7 @@ EXPECTED_SCAN_DURATION = 0.1
 DISTANCE_RESOLUTION = 0.002
 ROTATION_RESOLUTION = 0.01
 ROTATION_MAX_UNITS = 36000
+CSV_HEADER = ["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","laser_id","azimuth","distance_m","adjustedtime","timestamp"]
 
 class Velodyne:
     def __init__(self, metalog=None):
@@ -33,7 +34,7 @@ class Velodyne:
         self.buf = ""
         self.time = None
         self.last_blocked = None
-        self.points = [["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","laser_id","azimuth","distance_m","adjustedtime","timestamp","dual_distance","dual_intensity"]]
+        self.points = [CSV_HEADER]
         self.scan_index = 0
         self.prev_azimuth = None
 
@@ -44,7 +45,7 @@ class Velodyne:
         X = R * np.cos(omega) * np.sin(alpha)
         Y = R * np.cos(omega) * np.cos(alpha)
         Z = R * np.sin(omega)
-        return [X, Y, Z, int(intensity), laser_id, azimuth, R, time.time(), timestamp, 0.0, 0.0]
+        return [X, Y, Z, int(intensity), laser_id, azimuth, R, time.time(), timestamp]
 
     def write_data(self):
         dirs = 'data'
@@ -89,7 +90,7 @@ class Velodyne:
                 if self.prev_azimuth is not None and azimuth < self.prev_azimuth:
                     self.write_data();
                     self.scan_index += 1
-                    self.points = [["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","laser_id","azimuth","distance_m","adjustedtime","timestamp","dual_distance","dual_intensity"]]
+                    self.points = [CSV_HEADER]
                 self.prev_azimuth = azimuth
                 # H-distance (2mm step), B-reflectivity (0
                 arr = struct.unpack_from('<' + "HB" * 16, data, offset + 4 + step * 48)
