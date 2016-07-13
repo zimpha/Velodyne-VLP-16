@@ -33,8 +33,11 @@ CSV_HEADER = ["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","la
 MSG_QUEUE = Queue(-1)
 
 def save_data(path, data):
+    if not data:
+        return
     with open(path, 'w') as fp:
         wr = csv.writer(fp, delimiter=',')
+        wr.writerows([CSV_HEADER])
         wr.writerows(data)
 
 def save_process(msg_queue):
@@ -58,7 +61,7 @@ def capture(port, dirs, msg_queue):
     metalog = MetaLog()
     soc = metalog.createLoggedSocket("velodyne", headerFormat="<BBBI")
     soc.bind(('', port))
-    points = [CSV_HEADER]
+    points = []
     scan_index = 0
     prev_azimuth = None
 
@@ -84,12 +87,15 @@ def capture(port, dirs, msg_queue):
                                         os.makedirs(path)
                                 except Exception, e:
                                     print e
-                                timestamp = '%.6f' % time.time()
+                                if not points:
+                                    timestamp = '%.6f' % time.time()
+                                else:
+                                    timestamp = '%.6f' % points[0][7]
                                 csv_index = '%08d' % scan_index
                                 msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp), 'data': points}
                                 msg_queue.put(msg)
                                 scan_index += 1
-                                points = [CSV_HEADER]
+                                points = []
                             prev_azimuth = azimuth
                             # H-distance (2mm step), B-reflectivity (0
                             arr = struct.unpack_from('<' + "HB" * 16, data, offset + 4 + step * 48)
