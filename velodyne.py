@@ -48,14 +48,14 @@ def save_process(msg_queue):
             msg = msg_queue.get()
             save_data(msg['path'], msg['data'])
             print msg['path'], 'queue size: %d' % (msg_queue.qsize())
-def calc(dis, azimuth, intensity, laser_id, timestamp):
+def calc(dis, azimuth, intensity, laser_id, adjustedtime, timestamp):
     R = dis * DISTANCE_RESOLUTION
     omega = LASER_ANGLES[laser_id] * np.pi / 180.0
     alpha = azimuth / 100.0 * np.pi / 180.0
     X = R * np.cos(omega) * np.sin(alpha)
     Y = R * np.cos(omega) * np.cos(alpha)
     Z = R * np.sin(omega)
-    return [X, Y, Z, int(intensity), laser_id, azimuth, R, time.time(), timestamp]
+    return [X, Y, Z, int(intensity), laser_id, azimuth, R, adjustedtime, time.time(), timestamp]
 
 def capture(port, dirs, msg_queue):
     metalog = MetaLog()
@@ -64,6 +64,8 @@ def capture(port, dirs, msg_queue):
     points = []
     scan_index = 0
     prev_azimuth = None
+    current_timestamp = None
+    prev_vlp_timestamp = 0
 
     try:
         while True:
@@ -72,11 +74,21 @@ def capture(port, dirs, msg_queue):
                 if len(data) > 0:
                     assert len(data) == 1206, len(data)
                     timestamp, factory = struct.unpack_from("<IH", data, offset=1200)
+                    if current_timestamp == None:
+                        current_timestamp = int(time.time() * 1000000)
+                        prev_vlp_timestamp = timestamp
+                    timestamp_delta = timestamp - prev_vlp_timestamp
+                    if timestamp_delta < 0:
+                        timestamp_delta += 3600000000
+                    current_timestamp += timestamp_delta
+                    prev_vlp_timestamp = timestamp
                     assert factory == 0x2237, hex(factory)  # 0x22=VLP-16, 0x37=Strongest Return
+                    seq_index = 0
                     for offset in xrange(0, 1200, 100):
                         flag, azimuth = struct.unpack_from("<HH", data, offset)
                         assert flag == 0xEEFF, hex(flag)
                         for step in xrange(2):
+                            seq_index += 1
                             azimuth += step
                             azimuth %= ROTATION_MAX_UNITS
                             if prev_azimuth is not None and azimuth < prev_azimuth:
@@ -86,11 +98,11 @@ def capture(port, dirs, msg_queue):
                                     if os.path.exists(path) is False:
                                         os.makedirs(path)
                                 except Exception, e:
-                                    print e
+                                    print '100', e
                                 if not points:
                                     timestamp = '%.6f' % time.time()
                                 else:
-                                    timestamp = '%.6f' % points[0][7]
+                                    timestamp = '%.6f' % (points[0][7] / 1000000.0)
                                 csv_index = '%08d' % scan_index
                                 msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp), 'data': points}
                                 msg_queue.put(msg)
@@ -100,10 +112,12 @@ def capture(port, dirs, msg_queue):
                             # H-distance (2mm step), B-reflectivity (0
                             arr = struct.unpack_from('<' + "HB" * 16, data, offset + 4 + step * 48)
                             for i in xrange(NUM_LASERS):
+                                time_offset = 55.296 * seq_index + 2.304 * i
                                 if arr[i * 2] != 0:
-                                    points.append(calc(arr[i * 2], azimuth, arr[i * 2 + 1], i, timestamp))
+                                    # TODO: calculate precise server timestamp for each point
+                                    points.append(calc(arr[i * 2], azimuth, arr[i * 2 + 1], i, current_timestamp, timestamp + time_offset))
             except Exception, e:
-                print e
+                print '119', e
     except KeyboardInterrupt, e:
         print e
 
