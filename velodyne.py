@@ -18,6 +18,9 @@ import gevent
 
 from apyros.metalog import MetaLog, disableAsserts
 
+import logging
+import logging.config
+
 HOST = "192.168.1.201"
 PORT = 2368
 
@@ -31,6 +34,46 @@ ROTATION_RESOLUTION = 0.01
 ROTATION_MAX_UNITS = 36000
 
 MSG_QUEUE = Queue(-1)
+
+formatter = '[%(asctime)s][%(filename)s:%(lineno)s][%(levelname)s][%(message)s]'
+
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,  # this fixes the problem
+
+    'formatters': {
+        'standard': {
+            'format': formatter,
+        },
+    },
+    'handlers': {
+        'default': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard'
+        },
+        "debug_file_handler": {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "level": "DEBUG",
+            "formatter": "standard",
+            "filename": "./logs/lidar.log",
+            "when": "D",
+            "interval": 1,
+            "backupCount": 30,
+            "encoding": "utf8"
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ["default", 'debug_file_handler'],
+            'level': 'DEBUG',
+            'propagate': False
+        },
+    }
+}
+
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger("")
 
 def save_data(path, data):
     if not data:
@@ -110,6 +153,7 @@ def capture(port, dirs, msg_queue):
                                 csv_index = '%08d' % scan_index
                                 msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp_str), 'data': points}
                                 msg_queue.put(msg)
+                                logger.info(msg['path'])
                                 scan_index += 1
                                 points = []
                             prev_azimuth = azimuth
