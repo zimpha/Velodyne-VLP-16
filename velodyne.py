@@ -7,6 +7,7 @@ import socket
 from datetime import datetime, timedelta
 import struct
 import time
+import traceback
 import numpy as np
 from multiprocessing import Process, Queue, Pool
 
@@ -28,17 +29,19 @@ EXPECTED_SCAN_DURATION = 0.1
 DISTANCE_RESOLUTION = 0.002
 ROTATION_RESOLUTION = 0.01
 ROTATION_MAX_UNITS = 36000
-CSV_HEADER = ["Points_m_XYZ:0","Points_m_XYZ:1","Points_m_XYZ:2","intensity","laser_id","azimuth","distance_m","adjustedtime","timestamp"]
 
 MSG_QUEUE = Queue(-1)
 
 def save_data(path, data):
     if not data:
         return
-    with open(path, 'w') as fp:
-        wr = csv.writer(fp, delimiter=',')
-        wr.writerows([CSV_HEADER])
-        wr.writerows(data)
+    x = np.array(data, 'float32')
+    fp = open(path, 'wb')
+    x.tofile(fp)
+    fp.close()
+    #with open(path, 'wb') as fp:
+    #    wr = csv.writer(fp, delimiter=',')
+    #    wr.writerows(data)
 
 def save_process(msg_queue):
     while True:
@@ -48,6 +51,7 @@ def save_process(msg_queue):
             msg = msg_queue.get()
             save_data(msg['path'], msg['data'])
             print msg['path'], 'queue size: %d' % (msg_queue.qsize())
+
 def calc(dis, azimuth, intensity, laser_id, adjustedtime, timestamp):
     R = dis * DISTANCE_RESOLUTION
     omega = LASER_ANGLES[laser_id] * np.pi / 180.0
@@ -100,11 +104,11 @@ def capture(port, dirs, msg_queue):
                                 except Exception, e:
                                     print '100', e
                                 if not points:
-                                    timestamp = '%.6f' % time.time()
+                                    timestamp_str = '%.6f' % time.time()
                                 else:
-                                    timestamp = '%.6f' % (points[0][7] / 1000000.0)
+                                    timestamp_str = '%.6f' % (points[0][7] / 1000000.0)
                                 csv_index = '%08d' % scan_index
-                                msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp), 'data': points}
+                                msg = {'path': "{}/i{}_{}.csv".format(path, csv_index, timestamp_str), 'data': points}
                                 msg_queue.put(msg)
                                 scan_index += 1
                                 points = []
@@ -117,7 +121,11 @@ def capture(port, dirs, msg_queue):
                                     # TODO: calculate precise server timestamp for each point
                                     points.append(calc(arr[i * 2], azimuth, arr[i * 2 + 1], i, current_timestamp, timestamp + time_offset))
             except Exception, e:
-                print '119', e
+                print dir(e)
+                print e.message
+                print e.__class__.__name__
+                traceback.print_exc(e)
+
     except KeyboardInterrupt, e:
         print e
 
