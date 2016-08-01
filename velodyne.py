@@ -18,13 +18,6 @@ import traceback
 import numpy as np
 from multiprocessing import Process, Queue, Pool
 
-import gevent.monkey
-
-gevent.monkey.patch_socket()
-import gevent
-
-from apyros.metalog import MetaLog, disableAsserts
-
 import logging
 import logging.config
 
@@ -163,6 +156,7 @@ def save_package(dirs, data_queue):
                         fp.close()
                     file_fmt = os.path.join(dirs, '%Y-%m-%d_%H%M')
                     path = str(datetime.now().strftime(file_fmt)) + '.bin'
+                    logger.info('save to' + path)
                     print 'save to ', path
                     fp = open(path, 'ab')
                     cnt = 0
@@ -174,10 +168,9 @@ def save_package(dirs, data_queue):
     finally:
         if fp != None:
             fp.close()
-            
+
 def capture(port, data_queue):
-    metalog = MetaLog()
-    soc = metalog.createLoggedSocket("velodyne", headerFormat="<BBBI")
+    soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     soc.bind(('', port))
     try:
         while True:
@@ -193,13 +186,14 @@ def capture(port, data_queue):
         print e
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         print __doc__
         sys.exit(2)
     if sys.argv[1] == 'read':
+        top_dir = datetime.now().strftime('%Y-%m-%d_%H%M%S')
         processA = Process(target = capture, args = (PORT, DATA_QUEUE))
         processA.start()
-        processB = Process(target = save_package, args = ('./data', DATA_QUEUE))
+        processB = Process(target = save_package, args = (sys.argv[2] + '/' + top_dir, DATA_QUEUE))
         processB.start()
     else:
         unpack(sys.argv[2])
