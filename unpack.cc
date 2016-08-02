@@ -104,8 +104,6 @@ void unpack(char *dir, char *filename) {
         azimuth_diff = last_azimuth_diff;
       }
       for (int firing = 0, k = 0; firing < VLP16_FIRINGS_PER_BLOCK; ++firing) {
-        azimuth += azimuth_diff / 2;
-        azimuth %= ROTATION_MAX_UNITS;
         if (prev_azimuth != -1 && azimuth < prev_azimuth && !pts.empty()) {
           static char filepath[200];
           sprintf(filepath, "%s/i%08d_%.6f.csv", dir, scan_index, pts[0].ts);
@@ -113,7 +111,6 @@ void unpack(char *dir, char *filename) {
           scan_index += 1;
           pts.clear();
         }
-        prev_azimuth = azimuth;
         int seq_index = block * 2 + firing;
         for (int dsr = 0; dsr < VLP16_SCANS_PER_FIRING; ++dsr, k += RAW_SCAN_SIZE) {
           union two_bytes tmp;
@@ -124,6 +121,9 @@ void unpack(char *dir, char *filename) {
             pts.push_back(calc_point(tmp.uint, azimuth, dsr, timestamp + time_offset));
           }
         }
+        prev_azimuth = azimuth;
+        azimuth += azimuth_diff / 2;
+        azimuth %= ROTATION_MAX_UNITS;
       }
     }
   }
