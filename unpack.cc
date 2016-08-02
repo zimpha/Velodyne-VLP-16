@@ -90,13 +90,21 @@ void unpack(char *dir, char *filename) {
     char ts[20]; ts[17] = 0;
     for (int i = 0; i < 17; ++i) ts[i] = rawdata[i];
     const raw_packet_t *raw = (const raw_packet_t*)&rawdata[17];
-    double timestamp = atof(ts);
+    double timestamp = atof(ts) - 1327.104 / 1000000;
     assert(raw->factory == 0x2237);
+    int azimuth_diff = 0;
+    int last_azimuth_diff = 0;
     for (int block = 0; block < BLOCKS_PER_PACKET; ++block) {
       assert(UPPER_BANK == raw->blocks[block].header);
       int azimuth = raw->blocks[block].azimuth;
+      if (block + 1 < BLOCKS_PER_PACKET) {
+        azimuth_diff = (36000 + raw->blocks[block + 1].azimuth - azimuth) % 36000;
+        last_azimuth_diff = azimuth_diff;
+      } else {
+        azimuth_diff = last_azimuth_diff;
+      }
       for (int firing = 0, k = 0; firing < VLP16_FIRINGS_PER_BLOCK; ++firing) {
-        azimuth += 1;
+        azimuth += azimuth_diff / 2;
         azimuth %= ROTATION_MAX_UNITS;
         if (prev_azimuth != -1 && azimuth < prev_azimuth && !pts.empty()) {
           static char filepath[200];
@@ -106,11 +114,12 @@ void unpack(char *dir, char *filename) {
           pts.clear();
         }
         prev_azimuth = azimuth;
+        int seq_index = block * 2 + firing;
         for (int dsr = 0; dsr < VLP16_SCANS_PER_FIRING; ++dsr, k += RAW_SCAN_SIZE) {
           union two_bytes tmp;
           tmp.bytes[0] = raw->blocks[block].data[k];
           tmp.bytes[1] = raw->blocks[block].data[k + 1];
-          double time_offset = ((firing + 1) * VLP16_FIRING_TOFFSET + dsr * VLP16_DSR_TOFFSET) / 1000000.0;
+          double time_offset = (seq_index * VLP16_FIRING_TOFFSET + dsr * VLP16_DSR_TOFFSET) / 1000000.0;
           if (tmp.uint != 0) {
             pts.push_back(calc_point(tmp.uint, azimuth, dsr, timestamp + time_offset));
           }
