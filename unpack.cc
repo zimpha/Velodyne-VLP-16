@@ -38,8 +38,9 @@ const int LASER_ANGLES[] = {-15, 1, -13, 3, -11, 5, -9, 7, -7, 9, -5, 11, -3, 13
 
 struct Point {
   double x, y, z, ts;
+  int intensity;
   Point() {}
-  Point(double _x, double _y, double _z, double _ts): x(_x), y(_y), z(_z), ts(_ts) {}
+  Point(double _x, double _y, double _z, double _ts, int _in): x(_x), y(_y), z(_z), ts(_ts), intensity(_in) {}
 };
 
 union two_bytes {
@@ -67,19 +68,19 @@ void save_pts(char *filepath) {
   printf("%s\n", filepath);
   FILE *fp = fopen(filepath, "w");
   for (size_t i = 0; i < pts.size(); ++i) {
-    fprintf(fp, "%.10f,%.10f,%.10f,%.6f\n", pts[i].x, pts[i].y, pts[i].z, pts[i].ts);
+    fprintf(fp, "%.10f,%.10f,%.10f,%d,%.6f\n", pts[i].x, pts[i].y, pts[i].z, pts[i].intensity, pts[i].ts);
   }
   fclose(fp);
 }
 
-Point calc_point(double distance, int azimuth, int laser_id, double timestamp) {
+Point calc_point(double distance, int azimuth, int laser_id, double timestamp, int intensity) {
   distance *= DISTANCE_RESOLUTION;
   double omega = LASER_ANGLES[laser_id] * PI / 180.0;
   double alpha = azimuth * ROTATION_RESOLUTION * PI / 180.0;
   double X = distance * cos(omega) * sin(alpha);
   double Y = distance * cos(omega) * cos(alpha);
   double Z = distance * sin(omega);
-  return Point(X, Y, Z, timestamp);
+  return Point(X, Y, Z, timestamp, intensity);
 }
 
 uint8_t rawdata[3000];
@@ -116,9 +117,10 @@ void unpack(char *dir, char *filename) {
           union two_bytes tmp;
           tmp.bytes[0] = raw->blocks[block].data[k];
           tmp.bytes[1] = raw->blocks[block].data[k + 1];
+          int intensity = raw->blocks[block].data[k + 2];
           double time_offset = (seq_index * VLP16_FIRING_TOFFSET + dsr * VLP16_DSR_TOFFSET) / 1000000.0;
           if (tmp.uint != 0) {
-            pts.push_back(calc_point(tmp.uint, azimuth, dsr, timestamp + time_offset));
+            pts.push_back(calc_point(tmp.uint, azimuth, dsr, timestamp + time_offset, intensity));
           }
         }
         prev_azimuth = azimuth;
